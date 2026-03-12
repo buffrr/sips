@@ -148,7 +148,7 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
   { "type": "txt", "key": "btc", "value": "bc1q..." },
   { "type": "txt", "key": "website", "value": "https://example.com" },
   { "type": "txt", "key": "email", "value": "alice@example.com" },
-  { "type": "blob", "key": "some_data", "value": "iVBORw0KGgo..." },
+  { "type": "blob", "key": "some-data", "value": "iVBORw0KGgo..." },
   { "type": "unknown", "rtype": 42, "rdata": "SGVsbG8gV29ybGQ..." }
 ]
 </pre>
