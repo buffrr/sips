@@ -32,13 +32,13 @@ A record set is a concatenation of records:
 Each record:
 
 <pre>
-+--------+----------------+-----------+
-|  RType  |  RData Length   |   RData    |
-| 1 byte |  CompactSize   |  variable |
-+--------+----------------+-----------+
++---------+----------------+-----------+
+|  RType  |  RData Length  |   RData   |
+| 1 byte  |  CompactSize   |  variable |
++---------+----------------+-----------+
 </pre>
 
-'''rType''': Values <code>0x00</code>–<code>0xFE</code> are usable. <code>0xFF</code> is reserved.
+'''RType''': Values <code>0x00</code>–<code>0xFE</code> are usable. <code>0xFF</code> is reserved.
 
 '''RData Length''': Bitcoin CompactSize encoding (<code>0x00</code>–<code>0xFC</code> = 1 byte, <code>0xFD</code> = 3 bytes, <code>0xFE</code> = 5 bytes, <code>0xFF</code> = 9 bytes, all little-endian).
 
