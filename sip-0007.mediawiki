@@ -33,16 +33,16 @@ Each record:
 
 <pre>
 +--------+----------------+-----------+
-|  Type  |  Data Length   |   Data    |
+|  RType  |  RData Length   |   RData    |
 | 1 byte |  CompactSize   |  variable |
 +--------+----------------+-----------+
 </pre>
 
-'''Type''': Values <code>0x00</code>–<code>0xFE</code> are usable. <code>0xFF</code> is reserved.
+'''rType''': Values <code>0x00</code>–<code>0xFE</code> are usable. <code>0xFF</code> is reserved.
 
-'''Data Length''': Bitcoin CompactSize encoding (<code>0x00</code>–<code>0xFC</code> = 1 byte, <code>0xFD</code> = 3 bytes, <code>0xFE</code> = 5 bytes, <code>0xFF</code> = 9 bytes, all little-endian).
+'''RData Length''': Bitcoin CompactSize encoding (<code>0x00</code>–<code>0xFC</code> = 1 byte, <code>0xFD</code> = 3 bytes, <code>0xFE</code> = 5 bytes, <code>0xFF</code> = 9 bytes, all little-endian).
 
-'''Data''': Record-type-specific payload.
+'''RData''': Record-type-specific payload.
 
 Unknown types MUST be skipped using the length field and MUST be preserved when rewriting. Malformed data MUST cause the entire record set to be rejected.
 
@@ -149,7 +149,7 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
   { "type": "txt", "key": "website", "value": "https://example.com" },
   { "type": "txt", "key": "email", "value": "alice@example.com" },
   { "type": "blob", "key": "some_data", "value": "iVBORw0KGgo..." },
-  { "type": "unknown", "rtype": 42, "data": "SGVsbG8gV29ybGQ..." }
+  { "type": "unknown", "rtype": 42, "rdata": "SGVsbG8gV29ybGQ..." }
 ]
 </pre>
 
@@ -177,7 +177,7 @@ const TYPE_BLOB: u8 = 0x01;
 pub enum RecordData {
     Txt { key: String, value: String },
     Blob { key: String, value: Vec<u8> },
-    Unknown { type_id: u8, data: Vec<u8> },
+    Unknown { rtype: u8, rdata: Vec<u8> },
 }
 
 /// Record set iterator.
@@ -187,7 +187,7 @@ pub enum RecordData {
 ///     match record {
 ///         Ok(RecordData::Txt { key, value }) => println!("{key}: {value}"),
 ///         Ok(RecordData::Blob { key, value }) => println!("{key}: ({} bytes)", value.len()),
-///         Ok(RecordData::Unknown { type_id, .. }) => println!("unknown type: 0x{type_id:02x}"),
+///         Ok(RecordData::Unknown { rtype, .. }) => println!("unknown type: 0x{rtype:02x}"),
 ///         Err(e) => eprintln!("parse error: {e}"),
 ///     }
 /// }
@@ -229,7 +229,7 @@ impl<'a> Iterator for RecordIter<'a> {
             TYPE_BLOB => parse_kv(data).map(|(k, v)| {
                 RecordData::Blob { key: k, value: v.to_vec() }
             }),
-            _ => Ok(RecordData::Unknown { type_id: t, data: data.to_vec() }),
+            _ => Ok(RecordData::Unknown { rtype: t, rdata: data.to_vec() }),
         })
     }
 }
