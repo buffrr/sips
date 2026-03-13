@@ -48,11 +48,28 @@ Unknown types MUST be skipped using the length field and MUST be preserved when 
 
 ===Record Types===
 
+====SEQ — Sequence Record====
+
+A monotonically increasing version number for the record set. Used by off-chain protocols to determine which version of a record set is newer. Higher values are newer; there is no wraparound arithmetic.
+
+RType: <code>0x00</code>
+
+<pre>
++-------------------+
+|     version       |
+|   CompactSize     |
++-------------------+
+</pre>
+
+The version is encoded as a CompactSize integer, supporting values from 0 to 2<sup>64</sup>-1. Small sequence numbers (0–252) require only a single byte of payload.
+
+A record set MUST contain at most one SEQ record. If present, it MUST be the first record. Implementations MUST reject record sets containing a SEQ record in any other position or containing more than one SEQ record.
+
 ====TXT — Text Record====
 
 A key-value pair where both key and value are UTF-8 strings.
 
-RType: <code>0x00</code>
+RType: <code>0x01</code>
 
 <pre>
 +------------+---------------+-------------------+
@@ -67,7 +84,7 @@ The value length is derived from the data: <code>data_length - 1 - key_len</code
 
 Identical layout to TXT, but the value is raw bytes instead of UTF-8.
 
-RType: <code>0x01</code>
+RType: <code>0x02</code>
 
 <pre>
 +------------+---------------+-------------------+
@@ -80,7 +97,7 @@ When serialized to JSON, BLOB values SHOULD be encoded as base64.
 
 ====Reserved====
 
-Types <code>0x02</code>–<code>0xFE</code> are available for future use. Type <code>0xFF</code> is reserved as an extension prefix — if the 254 single-byte types are exhausted, a future SIP MAY define <code>0xFF</code> as an escape byte followed by additional type bytes to extend the type space.
+Types <code>0x03</code>–<code>0xFE</code> are available for future use. Type <code>0xFF</code> is reserved as an extension prefix — if the 254 single-byte types are exhausted, a future SIP MAY define <code>0xFF</code> as an escape byte followed by additional type bytes to extend the type space.
 
 Duplicate keys within the same record type SHOULD be rejected.
 
@@ -142,6 +159,7 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
 
 <pre>
 [
+  { "type": "seq", "version": 1 },
   { "type": "txt", "key": "nostr", "value": "npub1abc...xyz" },
   { "type": "txt", "key": "tor", "value": "pg6mm...d.onion" },
   { "type": "txt", "key": "ssh", "value": "ssh-ed25519 AAAA..." },
@@ -153,13 +171,13 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
 ]
 </pre>
 
-The <code>type</code> field MUST be lowercase (<code>"txt"</code>, <code>"blob"</code>, <code>"unknown"</code>). BLOB values and unknown record data are base64 encoded in JSON.
+The <code>type</code> field MUST be lowercase (<code>"seq"</code>, <code>"txt"</code>, <code>"blob"</code>, <code>"unknown"</code>). BLOB values and unknown record data are base64 encoded in JSON.
 
 ==Rationale==
 
-The format uses string-keyed TXT and BLOB records rather than assigning a numeric type to each use case. This allows new key conventions to emerge without requiring a spec update, following the proven model of DNS TXT records. Recommended keys use standard community text encodings (e.g. <code>npub1...</code> for Nostr, <code>bc1q...</code> for Bitcoin) rather than raw binary because these encodings are self-describing and version-safe — a <code>bc1q</code> prefix distinguishes segwit v0 from <code>bc1p</code> (v1) without out-of-band context.
+The format uses string-keyed TXT and BLOB records rather than assigning a numeric type to each use case. Recommended keys use standard community text encodings (e.g. <code>npub1...</code> for Nostr, <code>bc1q...</code> for Bitcoin) rather than raw binary because these encodings are self-describing and version-safe — a <code>bc1q</code> prefix distinguishes segwit v0 from <code>bc1p</code> (v1) without out-of-band context.
 
-Bitcoin CompactSize is used for the data length field instead of a fixed 1-byte length, allowing payloads beyond 255 bytes while keeping the common case (small records) to a single overhead byte.
+Bitcoin CompactSize is used for both the data length field and the SEQ version, keeping the common case (small values) to a single overhead byte while supporting the full <code>u64</code> range.
 
 Type <code>0xFF</code> is reserved as an extension prefix so that the single-byte type space can be expanded in the future without breaking existing parsers.
 
@@ -170,11 +188,13 @@ This is a new format with no prior deployed version. Implementations that encoun
 ==Reference Implementation==
 
 <pre>
-const TYPE_TXT: u8 = 0x00;
-const TYPE_BLOB: u8 = 0x01;
+const TYPE_SEQ: u8 = 0x00;
+const TYPE_TXT: u8 = 0x01;
+const TYPE_BLOB: u8 = 0x02;
 
 #[derive(Debug)]
 pub enum RecordData {
+    Seq(u64),
     Txt { key: String, value: String },
     Blob { key: String, value: Vec<u8> },
     Unknown { rtype: u8, rdata: Vec<u8> },
@@ -185,6 +205,7 @@ pub enum RecordData {
 /// ```
 /// for record in RecordIter::new(data) {
 ///     match record {
+///         Ok(RecordData::Seq(version)) => println!("seq: {version}"),
 ///         Ok(RecordData::Txt { key, value }) => println!("{key}: {value}"),
 ///         Ok(RecordData::Blob { key, value }) => println!("{key}: ({} bytes)", value.len()),
 ///         Ok(RecordData::Unknown { rtype, .. }) => println!("unknown type: 0x{rtype:02x}"),
@@ -195,11 +216,13 @@ pub enum RecordData {
 pub struct RecordIter<'a> {
     data: &'a [u8],
     pos: usize,
+    index: usize,
+    seen_seq: bool,
 }
 
 impl<'a> RecordIter<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self { data, pos: 0, index: 0, seen_seq: false }
     }
 }
 
@@ -211,26 +234,38 @@ impl<'a> Iterator for RecordIter<'a> {
 
         let t = self.data[self.pos];
         self.pos += 1;
-        if t == 0xFF { return Some(Err("reserved type")); }
 
         let len = match read_compact_size(self.data, &mut self.pos) {
-            Ok(v) => v,
+            Ok(v) => v as usize,
             Err(e) => return Some(Err(e)),
         };
         if self.pos + len > self.data.len() { return Some(Err("data overflow")); }
-        let data = &self.data[self.pos..self.pos + len];
+        let rdata = &self.data[self.pos..self.pos + len];
         self.pos += len;
 
-        Some(match t {
-            TYPE_TXT => parse_kv(data).and_then(|(k, v)| {
+        let record = match t {
+            TYPE_SEQ => {
+                if self.seen_seq { return Some(Err("duplicate seq")); }
+                if self.index > 0 { return Some(Err("seq must be first")); }
+                self.seen_seq = true;
+                let mut rpos = 0;
+                match read_compact_size(rdata, &mut rpos) {
+                    Ok(v) => Ok(RecordData::Seq(v)),
+                    Err(e) => Err(e),
+                }
+            }
+            TYPE_TXT => parse_kv(rdata).and_then(|(k, v)| {
                 let v = std::str::from_utf8(v).map_err(|_| "invalid value")?;
                 Ok(RecordData::Txt { key: k, value: v.to_string() })
             }),
-            TYPE_BLOB => parse_kv(data).map(|(k, v)| {
+            TYPE_BLOB => parse_kv(rdata).map(|(k, v)| {
                 RecordData::Blob { key: k, value: v.to_vec() }
             }),
-            _ => Ok(RecordData::Unknown { rtype: t, rdata: data.to_vec() }),
-        })
+            _ => Ok(RecordData::Unknown { rtype: t, rdata: rdata.to_vec() }),
+        };
+
+        self.index += 1;
+        Some(record)
     }
 }
 
@@ -247,25 +282,25 @@ fn parse_kv(data: &[u8]) -> Result<(String, &[u8]), &'static str> {
     Ok((key.to_string(), &data[1 + kl..]))
 }
 
-fn read_compact_size(data: &[u8], pos: &mut usize) -> Result<usize, &'static str> {
+fn read_compact_size(data: &[u8], pos: &mut usize) -> Result<u64, &'static str> {
     if *pos >= data.len() { return Err("unexpected eof"); }
     let first = data[*pos];
     *pos += 1;
     match first {
-        0x00..=0xFC => Ok(first as usize),
+        0x00..=0xFC => Ok(first as u64),
         0xFD => {
             if *pos + 2 > data.len() { return Err("unexpected eof"); }
-            let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]) as usize;
-            *pos += 2; Ok(v)
+            let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
+            *pos += 2; Ok(v as u64)
         }
         0xFE => {
             if *pos + 4 > data.len() { return Err("unexpected eof"); }
-            let v = u32::from_le_bytes(data[*pos..*pos + 4].try_into().unwrap()) as usize;
-            *pos += 4; Ok(v)
+            let v = u32::from_le_bytes(data[*pos..*pos + 4].try_into().unwrap());
+            *pos += 4; Ok(v as u64)
         }
         0xFF => {
             if *pos + 8 > data.len() { return Err("unexpected eof"); }
-            let v = u64::from_le_bytes(data[*pos..*pos + 8].try_into().unwrap()) as usize;
+            let v = u64::from_le_bytes(data[*pos..*pos + 8].try_into().unwrap());
             *pos += 8; Ok(v)
         }
     }
