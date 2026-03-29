@@ -107,6 +107,16 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
 
 ===Recommended TXT Records===
 
+====Spaces Protocol====
+
+{| class="wikitable"
+! Key !! Value !! Example
+|-
+| space || Top Level Space Name || <code>@space</code>
+|-
+| handle || Subspace Name Handle || <code>user@space</code>
+|}
+
 ====Payment Addresses====
 
 {| class="wikitable"
@@ -160,6 +170,8 @@ Keys in TXT and BLOB records are case-sensitive and MUST consist of lowercase AS
 <pre>
 [
   { "type": "seq", "version": 1 },
+  { "type": "txt", "key": "space", "value": "@space" },
+  { "type": "txt", "key": "handle", "value": "user@space" },
   { "type": "txt", "key": "nostr", "value": "npub1abc...xyz" },
   { "type": "txt", "key": "tor", "value": "pg6mm...d.onion" },
   { "type": "txt", "key": "ssh", "value": "ssh-ed25519 AAAA..." },
